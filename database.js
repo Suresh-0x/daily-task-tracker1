@@ -1,10 +1,13 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const os = require('os');
 
-const db = new Database(path.join(__dirname, 'tasks.db'));
-db.pragma('journal_mode = WAL');
+// Uses /tmp on Vercel, or local directory when running on your PC
+const dbPath = process.env.VERCEL ? path.join(os.tmpdir(), 'tasks.db') : path.join(__dirname, 'tasks.db');
 
-// Active daily tasks
+const db = new Database(dbPath);
+
+// Active tasks
 db.prepare(`
   CREATE TABLE IF NOT EXISTS active_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
