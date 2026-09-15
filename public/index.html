@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daily Task Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 p-4 md:p-8">
+  <div class="max-w-3xl mx-auto space-y-6">
+
+    <!-- Header -->
+    <header class="flex justify-between items-center bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">Task Tracker</h1>
+        <p class="text-xs text-slate-500 font-medium" id="currentDateDisplay"></p>
+      </div>
+      <div class="flex gap-2">
+        <button id="viewTrackerBtn" class="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white transition">Today</button>
+        <button id="viewHistoryBtn" class="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition">History</button>
+      </div>
+    </header>
+
+    <!-- Daily Tracker View -->
+    <main id="trackerView" class="space-y-6">
+      <!-- Input -->
+      <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+        <form id="taskForm" class="flex gap-3">
+          <input 
+            type="text" 
+            id="taskInput" 
+            placeholder="Add a new task..." 
+            class="flex-1 px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+            required
+          />
+          <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg text-sm font-semibold transition">
+            Add
+          </button>
+        </form>
+      </section>
+
+      <!-- Active Tasks -->
+      <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="font-bold text-slate-800">Today's Tasks</h2>
+          <button id="archiveDayBtn" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-semibold transition">
+            Close Day & Save to SQLite
+          </button>
+        </div>
+        <ul id="taskList" class="space-y-2"></ul>
+      </section>
+
+      <!-- Bin (All uncompleted items stay here until archived) -->
+      <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+        <h2 class="font-bold text-rose-700 mb-4">Bin (Uncompleted)</h2>
+        <ul id="binList" class="space-y-2"></ul>
+      </section>
+    </main>
+
+    <!-- History View -->
+    <main id="historyView" class="hidden space-y-6">
+      <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+        <div class="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
+          <h2 class="font-bold text-slate-800">History Records</h2>
+          <button id="clearHistoryBtn" class="text-xs text-rose-600 hover:underline font-semibold">Clear All History</button>
+        </div>
+        <div id="historyContainer" class="space-y-4"></div>
+      </section>
+    </main>
+
+  </div>
+
+  <script>
+    const API = '/api';
+    let activeTasks = [];
+
+    const taskForm = document.getElementById('taskForm');
+    const taskInput = document.getElementById('taskInput');
+    const taskList = document.getElementById('taskList');
+    const binList = document.getElementById('binList');
+    const archiveDayBtn = document.getElementById('archiveDayBtn');
+    const historyContainer = document.getElementById('historyContainer');
+    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+    const viewTrackerBtn = document.getElementById('viewTrackerBtn');
+    const viewHistoryBtn = document.getElementById('viewHistoryBtn');
+    const trackerView = document.getElementById('trackerView');
+    const historyView = document.getElementById('historyView');
+    const currentDateDisplay = document.getElementById('currentDateDisplay');
+
+    currentDateDisplay.textContent = new Date().toLocaleDateString(undefined, {
+      weekday: 'long', year: 'numeric', month: 'short', day: 'numeric'
+    });
+
+    async function loadTasks() {
+      const res = await fetch(`${API}/tasks`);
+      activeTasks = await res.json();
+      renderTasks();
+    }
+
+    function renderTasks() {
+      taskList.innerHTML = '';
+      binList.innerHTML = '';
+
+      const live = activeTasks.filter(t => !t.inBin);
+      const binned = activeTasks.filter(t => t.inBin);
+
+      if (live.length === 0) {
+        taskList.innerHTML = '<li class="text-slate-400 text-sm italic">No active tasks.</li>';
+      } else {
+        live.forEach(task => {
+          const li = document.createElement('li');
+          li.className = 'flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:bg-slate-50 transition';
+          li.innerHTML = `
+            <label class="flex items-center gap-3 cursor-pointer flex-1">
+              <input type="checkbox" ${task.completed ? 'checked' : ''} class="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500" />
+              <span class="${task.completed ? 'line-through text-slate-400' : 'text-slate-800'} text-sm font-medium">${task.text}</span>
+            </label>
+            <button class="binBtn text-xs text-rose-500 hover:text-rose-700 font-semibold px-2 py-1">Move to Bin</button>
+          `;
+
+          // Tick checkbox
+          li.querySelector('input').addEventListener('change', async (e) => {
+            await fetch(`${API}/tasks/${task.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ completed: e.target.checked })
+            });
+            loadTasks();
+          });
+
+          // Move to bin
+          li.querySelector('.binBtn').addEventListener('click', async () => {
+            await fetch(`${API}/tasks/${task.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ inBin: true, completed: false })
+            });
+            loadTasks();
+          });
+
+          taskList.appendChild(li);
+        });
+      }
+
+      if (binned.length === 0) {
+        binList.innerHTML = '<li class="text-slate-400 text-sm italic">Bin is empty.</li>';
+      } else {
+        binned.forEach(task => {
+          const li = document.createElement('li');
+          li.className = 'flex items-center justify-between p-3 rounded-lg bg-rose-50 border border-rose-100 text-sm text-rose-800';
+          li.innerHTML = `
+            <span class="line-through">${task.text}</span>
+            <button class="restoreBtn text-xs text-indigo-600 hover:underline font-semibold">Restore</button>
+          `;
+
+          li.querySelector('.restoreBtn').addEventListener('click', async () => {
+            await fetch(`${API}/tasks/${task.id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ inBin: false })
+            });
+            loadTasks();
+          });
+
+          binList.appendChild(li);
+        });
+      }
+    }
+
+    // Add Task
+    taskForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = taskInput.value.trim();
+      if (!text) return;
+
+      await fetch(`${API}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+
+      taskInput.value = '';
+      loadTasks();
+    });
+
+    // Close Day
+    archiveDayBtn.addEventListener('click', async () => {
+      if (activeTasks.length === 0) return alert('No tasks to archive.');
+      if (!confirm('Save today\'s completed and uncompleted tasks into SQLite history?')) return;
+
+      const res = await fetch(`${API}/archive`, { method: 'POST' });
+      if (res.ok) {
+        loadTasks();
+        alert('Archived successfully!');
+      }
+    });
+
+    // History View
+    async function loadHistory() {
+      const res = await fetch(`${API}/history`);
+      const records = await res.json();
+      historyContainer.innerHTML = '';
+
+      if (records.length === 0) {
+        historyContainer.innerHTML = '<p class="text-sm text-slate-400 italic">No history records found.</p>';
+        return;
+      }
+
+      records.forEach(day => {
+        const card = document.createElement('div');
+        card.className = 'p-5 rounded-xl border border-slate-200 bg-slate-50 space-y-3';
+        
+        const completedMarkup = day.completed.length
+          ? day.completed.map(t => `<li class="text-xs text-emerald-700 font-medium">✓ ${t}</li>`).join('')
+          : '<li class="text-xs text-slate-400 italic">None</li>';
+
+        const uncompletedMarkup = day.uncompleted.length
+          ? day.uncompleted.map(t => `<li class="text-xs text-rose-600 font-medium">✕ ${t}</li>`).join('')
+          : '<li class="text-xs text-slate-400 italic">None</li>';
+
+        card.innerHTML = `
+          <div class="font-bold text-sm text-slate-900 border-b border-slate-200 pb-2 flex justify-between">
+            <span>Date: ${day.date}</span>
+            <span class="text-xs text-slate-500 font-normal">${day.completed.length} completed / ${day.uncompleted.length} uncompleted</span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+            <div>
+              <p class="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2">Completed</p>
+              <ul class="space-y-1">${completedMarkup}</ul>
+            </div>
+            <div>
+              <p class="text-xs font-bold text-rose-800 uppercase tracking-wider mb-2">Uncompleted (Bin)</p>
+              <ul class="space-y-1">${uncompletedMarkup}</ul>
+            </div>
+          </div>
+        `;
+        historyContainer.appendChild(card);
+      });
+    }
+
+    clearHistoryBtn.addEventListener('click', async () => {
+      if (confirm('Delete all records from SQLite?')) {
+        await fetch(`${API}/history`, { method: 'DELETE' });
+        loadHistory();
+      }
+    });
+
+    viewTrackerBtn.addEventListener('click', () => {
+      trackerView.classList.remove('hidden');
+      historyView.classList.add('hidden');
+      viewTrackerBtn.className = 'px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white transition';
+      viewHistoryBtn.className = 'px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition';
+      loadTasks();
+    });
+
+    viewHistoryBtn.addEventListener('click', () => {
+      historyView.classList.remove('hidden');
+      trackerView.classList.add('hidden');
+      viewHistoryBtn.className = 'px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white transition';
+      viewTrackerBtn.className = 'px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition';
+      loadHistory();
+    });
+
+    loadTasks();
+  </script>
+</body>
+</html>
