@@ -5,19 +5,75 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Daily Task Tracker</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase JS Client CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 p-4 md:p-8">
-  <div class="max-w-3xl mx-auto space-y-6">
+
+  <!-- Auth Screen (Shown when logged out) -->
+  <div id="authScreen" class="max-w-md mx-auto my-16 bg-white p-8 rounded-2xl shadow-sm border border-slate-200 space-y-6">
+    <div class="text-center">
+      <h1 class="text-2xl font-bold text-slate-900">Task Tracker</h1>
+      <p class="text-sm text-slate-500 mt-1" id="authSubtitle">Sign in to manage your private tasks</p>
+    </div>
+
+    <form id="authForm" class="space-y-4">
+      <div>
+        <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Email</label>
+        <input 
+          type="email" 
+          id="authEmail" 
+          required 
+          placeholder="you@example.com"
+          class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+        />
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Password</label>
+        <input 
+          type="password" 
+          id="authPassword" 
+          required 
+          minlength="6"
+          placeholder="••••••••"
+          class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+        />
+      </div>
+
+      <div id="authError" class="text-xs text-rose-600 font-medium hidden"></div>
+
+      <button 
+        type="submit" 
+        id="authSubmitBtn"
+        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition"
+      >
+        Sign In
+      </button>
+    </form>
+
+    <div class="text-center text-xs text-slate-500">
+      <span id="authTogglePrompt">Don't have an account?</span>
+      <button id="authToggleBtn" class="text-indigo-600 font-semibold hover:underline ml-1">Sign Up</button>
+    </div>
+  </div>
+
+  <!-- App Main Screen (Shown when logged in) -->
+  <div id="appScreen" class="hidden max-w-3xl mx-auto space-y-6">
 
     <!-- Header -->
-    <header class="flex justify-between items-center bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+    <header class="flex flex-wrap justify-between items-center bg-white p-5 rounded-2xl shadow-sm border border-slate-200 gap-4">
       <div>
         <h1 class="text-2xl font-bold text-slate-900">Task Tracker</h1>
-        <p class="text-xs text-slate-500 font-medium" id="currentDateDisplay"></p>
+        <div class="flex items-center gap-2 mt-0.5">
+          <p class="text-xs text-slate-500 font-medium" id="currentDateDisplay"></p>
+          <span class="text-xs text-slate-300">•</span>
+          <span class="text-xs font-semibold text-indigo-600" id="userEmailBadge"></span>
+        </div>
       </div>
-      <div class="flex gap-2">
+      <div class="flex items-center gap-2">
         <button id="viewTrackerBtn" class="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white transition">Today</button>
         <button id="viewHistoryBtn" class="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition">History</button>
+        <button id="logoutBtn" class="px-3 py-2 text-sm font-semibold rounded-lg text-rose-600 hover:bg-rose-50 transition border border-rose-200">Logout</button>
       </div>
     </header>
 
@@ -44,13 +100,13 @@
         <div class="flex justify-between items-center mb-4">
           <h2 class="font-bold text-slate-800">Today's Tasks</h2>
           <button id="archiveDayBtn" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-semibold transition">
-            Close Day & Save to SQLite
+            Close Day & Archive
           </button>
         </div>
         <ul id="taskList" class="space-y-2"></ul>
       </section>
 
-      <!-- Bin (All uncompleted items stay here until archived) -->
+      <!-- Bin (Uncompleted) -->
       <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
         <h2 class="font-bold text-rose-700 mb-4">Bin (Uncompleted)</h2>
         <ul id="binList" class="space-y-2"></ul>
@@ -71,8 +127,28 @@
   </div>
 
   <script>
-    const API = '/api';
+    // 1. Supabase Initialization
+    const SUPABASE_URL = 'https://ahajtqvcxykqxryujosk.supabase.co';
+    const SUPABASE_ANON_KEY = 'PASTE_YOUR_ANON_KEY_HERE'; // Replace with your anon key
+    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let currentUser = null;
+    let isSignUpMode = false;
     let activeTasks = [];
+
+    // DOM Elements
+    const authScreen = document.getElementById('authScreen');
+    const appScreen = document.getElementById('appScreen');
+    const authForm = document.getElementById('authForm');
+    const authEmail = document.getElementById('authEmail');
+    const authPassword = document.getElementById('authPassword');
+    const authSubmitBtn = document.getElementById('authSubmitBtn');
+    const authToggleBtn = document.getElementById('authToggleBtn');
+    const authTogglePrompt = document.getElementById('authTogglePrompt');
+    const authSubtitle = document.getElementById('authSubtitle');
+    const authError = document.getElementById('authError');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const userEmailBadge = document.getElementById('userEmailBadge');
 
     const taskForm = document.getElementById('taskForm');
     const taskInput = document.getElementById('taskInput');
@@ -91,9 +167,101 @@
       weekday: 'long', year: 'numeric', month: 'short', day: 'numeric'
     });
 
+    // 2. Auth Mode Toggle (Sign In vs Sign Up)
+    authToggleBtn.addEventListener('click', () => {
+      isSignUpMode = !isSignUpMode;
+      authError.classList.add('hidden');
+      if (isSignUpMode) {
+        authSubtitle.textContent = 'Create your account to track your private tasks';
+        authSubmitBtn.textContent = 'Create Account';
+        authTogglePrompt.textContent = 'Already have an account?';
+        authToggleBtn.textContent = 'Sign In';
+      } else {
+        authSubtitle.textContent = 'Sign in to manage your private tasks';
+        authSubmitBtn.textContent = 'Sign In';
+        authTogglePrompt.textContent = "Don't have an account?";
+        authToggleBtn.textContent = 'Sign Up';
+      }
+    });
+
+    // 3. Auth Form Submission
+    authForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      authError.classList.add('hidden');
+      const email = authEmail.value.trim();
+      const password = authPassword.value;
+
+      try {
+        if (isSignUpMode) {
+          const { data, error } = await db.auth.signUp({ email, password });
+          if (error) throw error;
+          if (data.session) {
+            handleSession(data.session);
+          } else {
+            alert('Account created successfully! You can now sign in.');
+            authToggleBtn.click();
+          }
+        } else {
+          const { data, error } = await db.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+          handleSession(data.session);
+        }
+      } catch (err) {
+        authError.textContent = err.message;
+        authError.classList.remove('hidden');
+      }
+    });
+
+    // 4. Logout
+    logoutBtn.addEventListener('click', async () => {
+      await db.auth.signOut();
+      currentUser = null;
+      appScreen.classList.add('hidden');
+      authScreen.classList.remove('hidden');
+    });
+
+    // 5. Session Listener & Initial Check
+    function handleSession(session) {
+      if (session && session.user) {
+        currentUser = session.user;
+        userEmailBadge.textContent = currentUser.email;
+        authScreen.classList.add('hidden');
+        appScreen.classList.remove('hidden');
+        loadTasks();
+      } else {
+        currentUser = null;
+        appScreen.classList.add('hidden');
+        authScreen.classList.remove('hidden');
+      }
+    }
+
+    db.auth.getSession().then(({ data: { session } }) => {
+      handleSession(session);
+    });
+
+    db.auth.onAuthStateChange((_event, session) => {
+      handleSession(session);
+    });
+
+    // 6. Task Management (User Specific via Supabase RLS)
     async function loadTasks() {
-      const res = await fetch(`${API}/tasks`);
-      activeTasks = await res.json();
+      if (!currentUser) return;
+      const { data, error } = await db
+        .from('active_tasks')
+        .select('*')
+        .order('id', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching tasks:', error);
+        return;
+      }
+
+      activeTasks = (data || []).map(r => ({
+        id: r.id,
+        text: r.text,
+        completed: Boolean(r.completed),
+        inBin: Boolean(r.in_bin)
+      }));
       renderTasks();
     }
 
@@ -120,21 +288,19 @@
 
           // Tick checkbox
           li.querySelector('input').addEventListener('change', async (e) => {
-            await fetch(`${API}/tasks/${task.id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ completed: e.target.checked })
-            });
+            await db
+              .from('active_tasks')
+              .update({ completed: e.target.checked })
+              .eq('id', task.id);
             loadTasks();
           });
 
           // Move to bin
           li.querySelector('.binBtn').addEventListener('click', async () => {
-            await fetch(`${API}/tasks/${task.id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ inBin: true, completed: false })
-            });
+            await db
+              .from('active_tasks')
+              .update({ in_bin: true, completed: false })
+              .eq('id', task.id);
             loadTasks();
           });
 
@@ -154,11 +320,10 @@
           `;
 
           li.querySelector('.restoreBtn').addEventListener('click', async () => {
-            await fetch(`${API}/tasks/${task.id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ inBin: false })
-            });
+            await db
+              .from('active_tasks')
+              .update({ in_bin: false })
+              .eq('id', task.id);
             loadTasks();
           });
 
@@ -171,57 +336,96 @@
     taskForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const text = taskInput.value.trim();
-      if (!text) return;
+      if (!text || !currentUser) return;
 
-      await fetch(`${API}/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
+      const { error } = await db
+        .from('active_tasks')
+        .insert([{ 
+          text: text, 
+          completed: false, 
+          in_bin: false, 
+          user_id: currentUser.id 
+        }]);
+
+      if (error) {
+        alert('Error adding task: ' + error.message);
+        return;
+      }
 
       taskInput.value = '';
       loadTasks();
     });
 
-    // Close Day
+    // Close Day & Archive
     archiveDayBtn.addEventListener('click', async () => {
+      if (!currentUser) return;
       if (activeTasks.length === 0) return alert('No tasks to archive.');
-      if (!confirm('Save today\'s completed and uncompleted tasks into SQLite history?')) return;
+      if (!confirm("Save today's completed and uncompleted tasks into history?")) return;
 
-      const res = await fetch(`${API}/archive`, { method: 'POST' });
-      if (res.ok) {
-        loadTasks();
-        alert('Archived successfully!');
+      const completed = activeTasks.filter(t => t.completed).map(t => t.text);
+      const uncompleted = activeTasks.filter(t => !t.completed).map(t => t.text);
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      const { error: insertErr } = await db
+        .from('history_records')
+        .insert([{
+          date: todayStr,
+          completed_tasks: completed,
+          uncompleted_tasks: uncompleted,
+          user_id: currentUser.id
+        }]);
+
+      if (insertErr) {
+        alert('Archive failed: ' + insertErr.message);
+        return;
       }
+
+      // Delete only current user's active tasks
+      await db
+        .from('active_tasks')
+        .delete()
+        .eq('user_id', currentUser.id);
+
+      loadTasks();
+      alert('Archived successfully!');
     });
 
     // History View
     async function loadHistory() {
-      const res = await fetch(`${API}/history`);
-      const records = await res.json();
+      if (!currentUser) return;
+      const { data, error } = await db
+        .from('history_records')
+        .select('*')
+        .order('id', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching history:', error);
+        return;
+      }
+
       historyContainer.innerHTML = '';
 
-      if (records.length === 0) {
+      if (!data || data.length === 0) {
         historyContainer.innerHTML = '<p class="text-sm text-slate-400 italic">No history records found.</p>';
         return;
       }
 
-      records.forEach(day => {
+      data.forEach(day => {
         const card = document.createElement('div');
         card.className = 'p-5 rounded-xl border border-slate-200 bg-slate-50 space-y-3';
         
-        const completedMarkup = day.completed.length
-          ? day.completed.map(t => `<li class="text-xs text-emerald-700 font-medium">✓ ${t}</li>`).join('')
+        const completedMarkup = day.completed_tasks && day.completed_tasks.length
+          ? day.completed_tasks.map(t => `<li class="text-xs text-emerald-700 font-medium">✓ ${t}</li>`).join('')
           : '<li class="text-xs text-slate-400 italic">None</li>';
 
-        const uncompletedMarkup = day.uncompleted.length
-          ? day.uncompleted.map(t => `<li class="text-xs text-rose-600 font-medium">✕ ${t}</li>`).join('')
+        const uncompletedMarkup = day.uncompleted_tasks && day.uncompleted_tasks.length
+          ? day.uncompleted_tasks.map(t => `<li class="text-xs text-rose-600 font-medium">✕ ${t}</li>`).join('')
           : '<li class="text-xs text-slate-400 italic">None</li>';
 
         card.innerHTML = `
           <div class="font-bold text-sm text-slate-900 border-b border-slate-200 pb-2 flex justify-between">
             <span>Date: ${day.date}</span>
-            <span class="text-xs text-slate-500 font-normal">${day.completed.length} completed / ${day.uncompleted.length} uncompleted</span>
+            <span class="text-xs text-slate-500 font-normal">${(day.completed_tasks || []).length} completed / ${(day.uncompleted_tasks || []).length} uncompleted</span>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
             <div>
@@ -239,8 +443,12 @@
     }
 
     clearHistoryBtn.addEventListener('click', async () => {
-      if (confirm('Delete all records from SQLite?')) {
-        await fetch(`${API}/history`, { method: 'DELETE' });
+      if (!currentUser) return;
+      if (confirm('Delete all your history records?')) {
+        await db
+          .from('history_records')
+          .delete()
+          .eq('user_id', currentUser.id);
         loadHistory();
       }
     });
@@ -260,8 +468,6 @@
       viewTrackerBtn.className = 'px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition';
       loadHistory();
     });
-
-    loadTasks();
   </script>
 </body>
 </html>
