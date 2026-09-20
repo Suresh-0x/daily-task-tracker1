@@ -11,6 +11,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 1. Get today's tasks
+// 1. Get today's tasks
 app.get('/api/tasks', async (req, res) => {
   try {
     const { data, error } = await db
@@ -18,7 +19,10 @@ app.get('/api/tasks', async (req, res) => {
       .select('id, text, completed, in_bin')
       .order('id', { ascending: true });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase Error:', error);
+      return res.status(500).json({ error: error.message });
+    }
 
     res.json(data.map(r => ({
       id: r.id,
@@ -27,6 +31,7 @@ app.get('/api/tasks', async (req, res) => {
       inBin: Boolean(r.in_bin)
     })));
   } catch (err) {
+    console.error('Server Catch Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
