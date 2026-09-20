@@ -4,88 +4,159 @@ const cors = require('cors');
 const db = require('./database');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 1. Get today's tasks
-app.get('/api/tasks', (req, res) => {
-  const rows = db.prepare('SELECT id, text, completed, in_bin FROM active_tasks ORDER BY id ASC').all();
-  res.json(rows.map(r => ({
-    id: r.id,
-    text: r.text,
-    completed: Boolean(r.completed),
-    inBin: Boolean(r.in_bin)
-  })));
+app.get('/api/tasks', async (req, res) => {
+  try {
+    const { data, error } = await db
+      .from('active_tasks')
+      .select('id, text, completed, in_bin')
+      .order('id', { ascending: true });
+
+    if (error) throw error;
+
+    res.json(data.map(r => ({
+      id: r.id,
+      text: r.text,
+      completed: Boolean(r.completed),
+      inBin: Boolean(r.in_bin)
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 2. Add simple task
-app.post('/api/tasks', (req, res) => {
-  const { text } = req.body;
-  if (!text || !text.trim()) return res.status(400).json({ error: 'Text required' });
+app.post('/api/tasks', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Text required' });
 
-  const stmt = db.prepare('INSERT INTO active_tasks (text, completed, in_bin) VALUES (?, 0, 0)');
-  const result = stmt.run(text.trim());
-  res.json({ id: result.lastInsertRowid, text: text.trim(), completed: false, inBin: false });
+    const { data, error } = await db
+      .from('active_tasks')
+      .insert([{ text: text.trim(), completed: false, in_bin: false }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      id: data.id,
+      text: data.text,
+      completed: false,
+      inBin: false
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 3. Update task status (tick complete or move to bin)
-app.patch('/api/tasks/:id', (req, res) => {
-  const { id } = req.params;
-  const { completed, inBin } = req.body;
+app.patch('/api/tasks/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { completed, inBin } = req.body;
 
-  if (completed !== undefined) {
-    db.prepare('UPDATE active_tasks SET completed = ? WHERE id = ?').run(completed ? 1 : 0, id);
-  }
-  if (inBin !== undefined) {
-    db.prepare('UPDATE active_tasks SET in_bin = ? WHERE id = ?').run(inBin ? 1 : 0, id);
-  }
+    const updates = {};
+    if (completed !== undefined) updates.completed = Boolean(completed);
+    if (inBin !== undefined) updates.in_bin = Boolean(inBin);
 
-  res.json({ success: true });
+    const { error } = await db
+      .from('active_tasks')
+      .update(updates)
+      .eq('id', id);
+
+    if (error) throw error;
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 4. Archive day: completed tasks & all uncompleted tasks (active or in bin) are saved
-app.post('/api/archive', (req, res) => {
-  const tasks = db.prepare('SELECT text, completed FROM active_tasks').all();
-  if (tasks.length === 0) return res.status(400).json({ error: 'No tasks to archive' });
+// 4. Archive day: save to history and clear active tasks
+app.post('/api/archive', async (req, res) => {
+  try {
+    const { data: tasks, error: fetchErr } = await db
+      .from('active_tasks')
+      .select('text, completed');
 
-  const completed = tasks.filter(t => t.completed === 1).map(t => t.text);
-  const uncompleted = tasks.filter(t => t.completed === 0).map(t => t.text);
-  const todayStr = new Date().toISOString().split('T')[0];
+    if (fetchErr) throw fetchErr;
+    if (!tasks || tasks.length === 0) {
+      return res.status(400).json({ error: 'No tasks to archive' });
+    }
 
-  const archiveTx = db.transaction(() => {
-    db.prepare(`
-      INSERT INTO history_records (date, completed_tasks, uncompleted_tasks)
-      VALUES (?, ?, ?)
-    `).run(todayStr, JSON.stringify(completed), JSON.stringify(uncompleted));
+    const completed = tasks.filter(t => t.completed).map(t => t.text);
+    const uncompleted = tasks.filter(t => !t.completed).map(t => t.text);
+    const todayStr = new Date().toISOString().split('T')[0];
 
-    db.prepare('DELETE FROM active_tasks').run();
-  });
+    const { error: insertErr } = await db
+      .from('history_records')
+      .insert([{
+        date: todayStr,
+        completed_tasks: completed,
+        uncompleted_tasks: uncompleted
+      }]);
 
-  archiveTx();
-  res.json({ success: true });
+    if (insertErr) throw insertErr;
+
+    const { error: deleteErr } = await db
+      .from('active_tasks')
+      .delete()
+      .neq('id', 0); // delete all rows
+
+    if (deleteErr) throw deleteErr;
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 5. Get history records
-app.get('/api/history', (req, res) => {
-  const records = db.prepare('SELECT id, date, completed_tasks, uncompleted_tasks FROM history_records ORDER BY id DESC').all();
-  res.json(records.map(r => ({
-    id: r.id,
-    date: r.date,
-    completed: JSON.parse(r.completed_tasks),
-    uncompleted: JSON.parse(r.uncompleted_tasks)
-  })));
+app.get('/api/history', async (req, res) => {
+  try {
+    const { data, error } = await db
+      .from('history_records')
+      .select('id, date, completed_tasks, uncompleted_tasks')
+      .order('id', { ascending: false });
+
+    if (error) throw error;
+
+    res.json(data.map(r => ({
+      id: r.id,
+      date: r.date,
+      completed: r.completed_tasks,
+      uncompleted: r.uncompleted_tasks
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 6. Clear history
-app.delete('/api/history', (req, res) => {
-  db.prepare('DELETE FROM history_records').run();
-  res.json({ success: true });
+app.delete('/api/history', async (req, res) => {
+  try {
+    const { error } = await db
+      .from('history_records')
+      .delete()
+      .neq('id', 0);
+
+    if (error) throw error;
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
+
 module.exports = app;
